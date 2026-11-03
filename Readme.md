@@ -1,50 +1,32 @@
-## DevOps Assessment Assignment
+# DevOps and Claim Processing Assignments
 
-### Overview
+This repository contains two independent FastAPI applications: the original Celery/Redis task notifier and a LangGraph-based PDF claim extraction API.
 
-**Key components**
+## Quick start
 
-- **Backend** (`backend/main.py`) – FastAPI app: `POST /notify/` enqueues a Celery task, `GET /task_status/{task_id}` returns status/result.
-- **Worker** (`backend/worker.py`) – Celery worker that runs the background task.
-- **Redis** – Message broker and result backend for Celery.
-- **Frontend** (`frontend/index.html`) – Single page that triggers a task and polls until it’s done.
+```sh
+cp .env.example .env
+docker compose up --build
+```
 
-**Run locally (no Docker)**
+Open <http://localhost:8000>, submit an email, and watch the task status update. To run the claims API, set `OPENAI_API_KEY` in `.env`, then run:
 
-1. Start Redis.
-2. From project root: `cd backend && python -m venv venv`, activate venv, `pip install -r ../requirements.txt`.
-3. Terminal 1: `cd backend && celery -A worker worker --loglevel=info`.
-4. Terminal 2: `cd backend && uvicorn main:app --reload --port 8000`.
-5. Serve frontend: simply open index.html in browser.
----
+```sh
+docker compose up --build claims-api
+```
 
-Design and implement a workflow to:
+Open <http://localhost:8001/docs> for its interactive API. See [claims_pipeline/README.md](claims_pipeline/README.md) for the upload request and graph details, and [instructions.md](instructions.md) for full local and cloud instructions.
 
-- **Containerize the application**
-  - Build Docker images for the existing backend.
-  - Provide a setup to run the app locally.
-  - Identify all the hardcoded values and replace those with environment variables.
-  - Include any required local dependencies (e.g. message broker, database) as containers.
+## Components
 
-- **Run containers locally**
-  - Provide clear commands to:
-    - Build images.
-    - Start the full stack.
-    - View logs and debug.
+- `backend/main.py`: FastAPI endpoints and frontend serving route
+- `backend/worker.py`: Celery app and background task
+- `frontend/index.html`: single-page task submission and polling UI
+- `Dockerfile` and `docker-compose.yml`: local containerized stack
+- `infra/terraform/`: AWS network, ECR, ECS Fargate, ElastiCache Redis, IAM, Secrets Manager, and CloudWatch resources
+- `infra/state/`: encrypted, versioned S3 Terraform state bucket
+- `.github/workflows/deploy.yml`: GitHub Actions build and ECS deployment using OIDC
+- `claims_pipeline/`: separate PDF upload API, LangGraph workflow, and three extraction agents
+- `tests/test_claim_workflow.py`: offline graph routing test with a fake structured-output model
 
-- **Deploy to a cloud provider using code (no manual clicks)**
-  - Use **Infrastructure as Code (IaC)** to provision all cloud resources.
-  - Use **CI/CD** (GitHub Actions, GitLab CI, Azure DevOps, etc.) to build, push images, and deploy the app.
-
-- **Maximize managed cloud services**
-  - Prefer managed services over self-hosted where possible.
-  - Use cloud-native logging/monitoring where reasonable (e.g. CloudWatch, Azure Monitor, Stackdriver).
-
-- **Deliverables**
-  - updated code base with IAC and build related code.
-  - document your journey in `journey.md` file.
-  - create `instructions.md` file for developers to run containerized setup locally.
-  - simple architecture diagram to showcase cloud resources.
-  - single-page frontend in `frontend/index.html` that:
-    - calls the `POST /notify/` API to trigger a background task.
-    - polls the `GET /task_status/{task_id}` API to show live task status and result.
+See [architecture.md](architecture.md) for the cloud resource diagram and [journey.md](journey.md) for implementation decisions and production considerations.

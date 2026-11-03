@@ -1,0 +1,85 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main, devops_project]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY: devops-assignment-demo
+  ECS_CLUSTER: devops-assignment-demo
+  BACKEND_SERVICE: devops-assignment-demo-backend
+  WORKER_SERVICE: devops-assignment-demo-worker
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          docker build --pull -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "image=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Update backend service
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$BACKEND_SERVICE" \
+            --query taskDefinition \
+            --output json > /tmp/backend-task.json
+          aws ecs describe-task-definition \
+            --task-definition "devops-assignment-demo-backend" \
+            --query taskDefinition.containerDefinitions \
+            --output json > /tmp/backend-containers.json
+          jq --arg image "${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:sha-${{ github.sha }}" \
+            'map(if .name == "backend" then .image = $image else . end)' \
+            /tmp/backend-containers.json > /tmp/backend-containers-updated.json
+          jq --slurpfile containers /tmp/backend-containers-updated.json \
+            '.containerDefinitions = $containers[0] | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)' \
+            /tmp/backend-task.json > /tmp/backend-register.json
+          BACKEND_TASK_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/backend-register.json \
+            --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$BACKEND_SERVICE" \
+            --task-definition "$BACKEND_TASK_ARN" --force-new-deployment
+
+      - name: Update worker service
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$WORKER_SERVICE" \
+            --query taskDefinition --output json > /tmp/worker-task.json
+          jq --arg image "${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:sha-${{ github.sha }}" \
+            '.containerDefinitions |= map(if .name == "worker" then .image = $image else . end) | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)' \
+            /tmp/worker-task.json > /tmp/worker-register.json
+          WORKER_TASK_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/worker-register.json \
+            --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" \
+            --task-definition "$WORKER_TASK_ARN" --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" \
+            --services "$BACKEND_SERVICE" "$WORKER_SERVICE"

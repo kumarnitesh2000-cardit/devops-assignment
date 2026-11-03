@@ -1,1 +1,11 @@
 venv
+.env
+__pycache__/
+*.py[cod]
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+infra/terraform/.terraform.lock.hcl
+infra/terraform/backend.hcl
+infra/state/*.tfvars
